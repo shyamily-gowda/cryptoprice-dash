@@ -1,11 +1,28 @@
 <link rel="import" href="bower_components/polymer/polymer-element.html">
 <link rel="import" href="bower_components/iron-ajax/iron-ajax.html">
+<link rel="import" href="bower_components/paper-spinner/paper-spinner-lite.html">
+<link rel="import" href="bower_components/paper-button/paper-button.html">
+
+<script src="bower_components/chart.js/dist/chart.js"></script>
+<script src="bower_components/moment/min/moment.min.js"></script>
 <dom-module id="cryptoprice-dash">
     <template>
         <style>
         </style>
         <h2>Cryptoprice dashboard</h2>
-        <iron-ajax id="coinbase" handle-as="json" on-response="_handleResponse"></iron-ajax>
+        <iron-ajax id="coinbase" handle-as="json" on-response="_handleResponse" loading="{{loading}}"></iron-ajax>
+        <paper-spinner-lite active="[[loading]]"></paper-spinner-lite>
+        <div hidden$="[[loading]]">
+            <template is="dom-repeat" items="[[currencies]]">
+                <paper-button nolink on-click="_getCurrencyHistoricData" data-item$="[[item.code]]">
+                    [[item.name]] $[[item.price]]
+                </paper-button>
+            </template>
+        </div>
+        <div hidden="[[loading]]" style="width:100%;max-width: 700px;margin:0 auto">
+            <canvas id="myChart" width="4" height="2"></canvas>
+        </div>
+        
     </template>
     <script>
         class crytopriceDash extends Polymer.Element{
@@ -16,23 +33,35 @@
                         type: Array,
                         value:[{
                             code:'BTC',
-                            name:'Bitcoin'
+                            name:'Bitcoin',
+                            price:0
                         },{
                             code:'ETH',
-                            name:'Ethereum'
+                            name:'Ethereum',
+                            price:0
                         },{
                             code:'LTC',
-                            name:'Lightcoin'
+                            name:'Lightcoin',
+                            price:0
                         }]
-                    }
+                    },
+                    loading:{
+                        type:Boolean,
+                        value:false,
+                        notify:true
+                    },
+                    myLineChart:{}
                 }
             }
+            
             ready(){
                 super.ready();
                 Polymer.RenderStatus.afterNextRender(this,function(){
                     this._getCurrenciesData();
+                    this._getCurrencyHistoricData(this.currencies[0].code);
                 })
             }
+
             _getCurrenciesData(){
                 
                 var ajax = this.$.coinbase;
@@ -42,8 +71,91 @@
                     ajax.generateRequest();// triggers the iron-ajax
                 },this);
             }
+
+            _getCurrencyHistoricData(currency){               
+                if(currency !== undefined && typeof(currency) == "object"){                    
+                    currency = currency.target.dataset.item;
+                }                
+                var ajax = this.$.coinbase;
+                ajax.url = 'https://api.coinbase.com/v2/prices/'+ currency +'-USD/historic?period=week';
+                ajax.generateRequest();// triggers the iron-ajax
+            }
+
             _handleResponse(response){
                 console.log('response',response.detail.__data.response.data);
+                var data = response.detail.__data.response.data;
+                //spot data
+                if(data.amount != null){
+                    this._computeCurrenciesPrice(response.detail);
+                }else{
+                    //get historic data from crypto api
+                    this._computeGraph(response.detail)
+                }                
+            }
+
+            //using observable changes set currencies array with price data
+            _computeCurrenciesPrice(data){
+                var code = data.url.substring(35,38);
+                var index = this.currencies.map(function(e){ return e.code;}).indexOf(code);//checks currencies array with given 'code' and returns the index of it
+                this.set('currencies.'+ index +'.price',data.response.data.amount);
+            }
+
+            _computeGraph(data){
+                var code = data.url.substring(35,38);
+                var lable = [], price = [];
+                data.response.data.prices.forEach(function(el){
+                    lable.push(this._computeDateTime(el.time));
+                    price.push(el.price);
+                },this);
+                this._generateLineChart(lable,price,code);
+            }
+
+            _computeDateTime(dateString){
+                if(dateString){
+                    return moment(dateString,"YYYY-MM-DDThh-mm-aaZ").format("M/D/YYYY h:mm a");
+                }
+                return dateString;
+            }
+
+            _generateLineChart(lable,price,lableName){
+                //if the chart exist - destroy
+                if(this.myLineChart !== undefined){
+                    this.myLineChart.destroy();
+                }
+                var ctx = this.$.myChart.getContext('2d');
+                this.myLineChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: lable.reverse(),
+                        datasets: [{
+                            label: lableName,
+                            data : price.reverse(),
+                            backgroundColor: "rgba(111, 124, 186, 0.1)",
+                            borderColor: "#222",
+                            borderWidth: 2,
+                            pointRadius:0
+                        }]
+                    },
+                    options: {
+                        animation:false,
+                        tooltips:{
+                            mode:'index',
+                            intersect:false
+                        },
+                        scales:{
+                            xAxes:[{
+                                gridLines:{
+                                    display:false
+                                }
+                            }],
+                            yAxes:[{
+                                gridLines:{
+                                    display:false
+                                }
+                            }]
+                        }
+                    }
+                });
             }
         }
 
